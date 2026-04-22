@@ -528,126 +528,128 @@ export default function App() {
         <button onClick={addTask} className="border px-2 py-1 text-sm bg-gray-100">Add</button>
       </div>
 
-      <div
-        ref={containerRef}
-        onMouseDown={startSelection}
-        className="relative h-[700px] border"
-        onMouseMove={e => {
-          const rect = containerRef.current.getBoundingClientRect();
-          setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-        }}
-        onDoubleClick={e => {
-          if (e.target !== containerRef.current) return;
-          const rect = containerRef.current.getBoundingClientRect();
-          addSectionAt(e.clientX - rect.left, e.clientY - rect.top);
-        }}
-      >
-        <svg className="absolute inset-0 pointer-events-none z-10" width="100%" height="100%">
-          {links.map((l, i) => {
-            const t1 = tasks.find(t => t.id === l.from);
-            const t2 = tasks.find(t => t.id === l.to);
-            if (!t1 || !t2) return null;
-            const p1 = getCenter(t1);
-            const p2 = getCenter(t2);
-            return (
-              <g key={i}>
-              <line
-                x1={p1.x}
-                y1={p1.y}
-                x2={p2.x}
-                y2={p2.y}
-                stroke="transparent"
-                strokeWidth={12}
-                style={{ pointerEvents: "stroke" }}
-                onContextMenu={(e) => { e.preventDefault(); deleteLink(i); }}
-              />
-              <line
-                x1={p1.x}
-                y1={p1.y}
-                x2={p2.x}
-                y2={p2.y}
-                stroke="black"
-                strokeWidth={1}
-                pointerEvents="none"
-              />
-            </g>
-            );
-          })}
-        </svg>
+      <div className="h-[calc(100vh-120px)] border overflow-auto">
+        <div
+          ref={containerRef}
+          onMouseDown={startSelection}
+          className="relative min-w-[3000px] min-h-[2000px]"
+          onMouseMove={e => {
+            const rect = containerRef.current.getBoundingClientRect();
+            setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+          }}
+          onDoubleClick={e => {
+            if (e.target !== containerRef.current) return;
+            const rect = containerRef.current.getBoundingClientRect();
+            addSectionAt(e.clientX - rect.left, e.clientY - rect.top);
+          }}
+        >
+          <svg className="absolute inset-0 pointer-events-none z-10" width="100%" height="100%">
+            {links.map((l, i) => {
+              const t1 = tasks.find(t => t.id === l.from);
+              const t2 = tasks.find(t => t.id === l.to);
+              if (!t1 || !t2) return null;
+              const p1 = getCenter(t1);
+              const p2 = getCenter(t2);
+              return (
+                <g key={i}>
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke="transparent"
+                  strokeWidth={12}
+                  style={{ pointerEvents: "stroke" }}
+                  onContextMenu={(e) => { e.preventDefault(); deleteLink(i); }}
+                />
+                <line
+                  x1={p1.x}
+                  y1={p1.y}
+                  x2={p2.x}
+                  y2={p2.y}
+                  stroke="black"
+                  strokeWidth={1}
+                  pointerEvents="none"
+                />
+              </g>
+              );
+            })}
+          </svg>
 
-        <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%">
-          {linkStart && (() => {
-            const t = tasks.find(t => t.id === linkStart.taskId);
-            if (!t) return null;
-            const p = getCenter(t);
-            return (
-              <line x1={p.x} y1={p.y} x2={mousePos.x} y2={mousePos.y} stroke="black" strokeDasharray="4" />
-            );
-          })()}
-        </svg>
+          <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%">
+            {linkStart && (() => {
+              const t = tasks.find(t => t.id === linkStart.taskId);
+              if (!t) return null;
+              const p = getCenter(t);
+              return (
+                <line x1={p.x} y1={p.y} x2={mousePos.x} y2={mousePos.y} stroke="black" strokeDasharray="4" />
+              );
+            })()}
+          </svg>
 
-        {tasks.filter(t => t.y !== 20).map(task => (
-          <div
-            key={task.id}
-            onMouseDown={e => startDragTask(e, task)}
-            onDoubleClick={() => completeTask(task.id)}
-            onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-            className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedIds.has(task.id) ? "ring-2 ring-blue-500" : ""}`}
-            style={{ left: task.x, top: task.y, width: 160 }}
-          >
-            {task.title}
-          </div>
-        ))}
-
-        {/* Selection box */}
-        {selectionBox && (
-          <div
-            className="absolute border border-blue-400 bg-blue-100/30 z-40"
-            style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}
-          />
-        )}
-
-        {sections.map(sec => (
-          <div
-            key={sec.id}
-            className="absolute bg-gray-100 rounded-lg shadow z-0 border border-gray-300"
-            style={{ left: sec.x, top: sec.y, width: sec.width, height: sec.height }}
-          >
-            <div className="flex justify-between p-2 font-bold relative z-20">
-              <input
-                value={sec.name}
-                onChange={e =>
-                  setSections(prev => prev.map(s => (s.id === sec.id ? { ...s, name: e.target.value } : s)))
-                }
-                className="bg-transparent w-full ml-[4px]"
-              />
-              <div className="flex items-center gap-2">
-                <button onMouseDown={e => e.stopPropagation()} onClick={() => deleteSection(sec.id)}>
-                  ✕
-                </button>
-                <span
-                  className="text-lg cursor-move"
-                  onMouseDown={e => {
-                    e.stopPropagation();
-                    startDragSection(e, sec);
-                  }}
-                >
-                  ✥
-                </span>
-              </div>
+          {tasks.filter(t => t.y !== 20).map(task => (
+            <div
+              key={task.id}
+              onMouseDown={e => startDragTask(e, task)}
+              onDoubleClick={() => completeTask(task.id)}
+              onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
+              className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedIds.has(task.id) ? "ring-2 ring-blue-500" : ""}`}
+              style={{ left: task.x, top: task.y, width: 160 }}
+            >
+              {task.title}
             </div>
+          ))}
 
-            <div onMouseDown={e => startResizeSection(e, sec, "right")} className="absolute right-0 top-0 h-full w-2 cursor-ew-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "left")} className="absolute left-0 top-0 h-full w-2 cursor-ew-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "bottom")} className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "top")} className="absolute top-0 left-0 w-full h-2 cursor-ns-resize" />
+          {/* Selection box */}
+          {selectionBox && (
+            <div
+              className="absolute border border-blue-400 bg-blue-100/30 z-40 pointer-events-none"
+              style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}
+            />
+          )}
 
-            <div onMouseDown={e => startResizeSection(e, sec, "top-left")} className="absolute left-0 top-0 w-3 h-3 cursor-nwse-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "top-right")} className="absolute right-0 top-0 w-3 h-3 cursor-nesw-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "bottom-left")} className="absolute left-0 bottom-0 w-3 h-3 cursor-nesw-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "bottom-right")} className="absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize" />
-          </div>
-        ))}
+          {sections.map(sec => (
+            <div
+              key={sec.id}
+              className="absolute bg-gray-100 rounded-lg shadow z-0 border border-gray-300"
+              style={{ left: sec.x, top: sec.y, width: sec.width, height: sec.height }}
+            >
+              <div className="flex justify-between p-2 font-bold relative z-20">
+                <input
+                  value={sec.name}
+                  onChange={e =>
+                    setSections(prev => prev.map(s => (s.id === sec.id ? { ...s, name: e.target.value } : s)))
+                  }
+                  className="bg-transparent w-full ml-[4px]"
+                />
+                <div className="flex items-center gap-2">
+                  <button onMouseDown={e => e.stopPropagation()} onClick={() => deleteSection(sec.id)}>
+                    ✕
+                  </button>
+                  <span
+                    className="text-lg cursor-move"
+                    onMouseDown={e => {
+                      e.stopPropagation();
+                      startDragSection(e, sec);
+                    }}
+                  >
+                    ✥
+                  </span>
+                </div>
+              </div>
+
+              <div onMouseDown={e => startResizeSection(e, sec, "right")} className="absolute right-0 top-0 h-full w-2 cursor-ew-resize" />
+              <div onMouseDown={e => startResizeSection(e, sec, "left")} className="absolute left-0 top-0 h-full w-2 cursor-ew-resize" />
+              <div onMouseDown={e => startResizeSection(e, sec, "bottom")} className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize" />
+              <div onMouseDown={e => startResizeSection(e, sec, "top")} className="absolute top-0 left-0 w-full h-2 cursor-ns-resize" />
+
+              <div onMouseDown={e => startResizeSection(e, sec, "top-left")} className="absolute left-0 top-0 w-3 h-3 cursor-nwse-resize" />
+              <div onMouseDown={e => startResizeSection(e, sec, "top-right")} className="absolute right-0 top-0 w-3 h-3 cursor-nesw-resize" />
+              <div onMouseDown={e => startResizeSection(e, sec, "bottom-left")} className="absolute left-0 bottom-0 w-3 h-3 cursor-nesw-resize" />
+              <div onMouseDown={e => startResizeSection(e, sec, "bottom-right")} className="absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize" />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
