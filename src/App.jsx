@@ -31,7 +31,8 @@ function createTask(title, x, y) {
     x,
     y,
     completed: false,
-    highlighted: false
+    highlighted: false,
+    blue: false
   };
 }
 
@@ -106,7 +107,21 @@ export default function App() {
       e.stopPropagation();
       e.preventDefault();
       setTasks(prev => prev.map(t =>
-        t.id === task.id ? { ...t, highlighted: !t.highlighted } : t
+        t.id === task.id
+          ? { ...t, highlighted: !t.highlighted, blue: false }
+          : t
+      ));
+      return;
+    }
+
+    // Ctrl+click = light blue toggle
+    if (e.ctrlKey || e.metaKey) {
+      e.stopPropagation();
+      e.preventDefault();
+      setTasks(prev => prev.map(t =>
+        t.id === task.id
+          ? { ...t, blue: !t.blue, highlighted: false }
+          : t
       ));
       return;
     }
@@ -184,14 +199,6 @@ export default function App() {
   function handleTaskClick(taskId) {
     const currentStart = linkStartRef.current;
 
-    // If clicking the same task again → cancel linking
-    if (currentStart && currentStart.taskId === taskId) {
-      linkStartRef.current = null;
-      setLinkStart(null);
-      return;
-    }
-
-    // Start linking
     if (!currentStart) {
       const next = { taskId };
       linkStartRef.current = next;
@@ -434,7 +441,7 @@ export default function App() {
               onMouseDown={e => startDragTask(e, task)}
               onDoubleClick={() => completeTask(task.id)}
               onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-              className={`${task.highlighted ? "bg-yellow-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move select-none`}
+              className={`${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move select-none`}
               style={{ width: 160 }}
             >
               {task.title}
@@ -514,7 +521,7 @@ export default function App() {
             onMouseDown={e => startDragTask(e, task)}
             onDoubleClick={() => completeTask(task.id)}
             onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-            className={`absolute ${task.highlighted ? "bg-yellow-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none`}
+            className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none`}
             style={{ left: task.x, top: task.y, width: 160 }}
           >
             {task.title}
