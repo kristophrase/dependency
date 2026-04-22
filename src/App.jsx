@@ -47,7 +47,7 @@ export default function App() {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const linkStartRef = useRef(null);
 
-  // Selection layer (visual only)
+  // Selection (visual only)
   const [selectionBox, setSelectionBox] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
@@ -105,65 +105,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  // Start selection only when clicking empty canvas
-  function startSelection(e) {
-    // Only handle LEFT mouse button for selection (don’t interfere with right-click)
-    if (e.button !== 0) return;
-
-    // prevent browser text selection while dragging selection box
-    e.preventDefault();
-
-    // clear selection on simple click
-    setSelectedIds(new Set());
-
-    if (e.target !== containerRef.current) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const startX = e.clientX - rect.left;
-    const startY = e.clientY - rect.top;
-
-    setSelectionBox({ x: startX, y: startY, w: 0, h: 0 });
-
-    function move(ev) {
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-
-      const box = {
-        x: Math.min(startX, x),
-        y: Math.min(startY, y),
-        w: Math.abs(x - startX),
-        h: Math.abs(y - startY)
-      };
-
-      setSelectionBox(box);
-
-      const selected = new Set();
-      tasks.forEach(t => {
-        if (
-          t.x < box.x + box.w &&
-          t.x + 160 > box.x &&
-          t.y < box.y + box.h &&
-          t.y + 40 > box.y
-        ) {
-          selected.add(t.id);
-        }
-      });
-
-      setSelectedIds(selected);
-    }
-
-    function up() {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-      setSelectionBox(null);
-    }
-
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  }
-
   function startDragTask(e, task) {
-    // Shift+click = highlight only (no drag, no linking)
+    // Shift+click = highlight only
     if (e.shiftKey) {
       e.stopPropagation();
       e.preventDefault();
@@ -175,7 +118,7 @@ export default function App() {
       return;
     }
 
-    // Ctrl+click = light blue toggle
+    // Ctrl/Cmd+click = blue toggle
     if (e.ctrlKey || e.metaKey) {
       e.stopPropagation();
       e.preventDefault();
@@ -191,23 +134,37 @@ export default function App() {
     e.preventDefault();
 
     const rect = containerRef.current.getBoundingClientRect();
-
     const startX = e.clientX;
     const startY = e.clientY;
 
-    // --- NEW: decide group (selected or single) ---
+    // Normalize staging position
+    let initialX = task.x;
+    let initialY = task.y;
+    if (task.y === 20) {
+      initialX = e.clientX - rect.left - 80;
+      initialY = e.clientY - rect.top - 20;
+      setTasks(prev => prev.map(t =>
+        t.id === task.id ? { ...t, x: initialX, y: initialY } : t
+      ));
+    }
+
+    // Decide group (selected or single)
     const groupIds = selectedIds.has(task.id)
       ? new Set(selectedIds)
       : new Set([task.id]);
 
-    // capture initial offsets for each task in the group
+    // Capture offsets per task in group
     const offsets = tasks
       .filter(t => groupIds.has(t.id))
-      .map(t => ({
-        id: t.id,
-        offsetX: e.clientX - (rect.left + t.x),
-        offsetY: e.clientY - (rect.top + t.y)
-      }));
+      .map(t => {
+        const baseX = (t.id === task.id) ? initialX : t.x;
+        const baseY = (t.id === task.id) ? initialY : t.y;
+        return {
+          id: t.id,
+          offsetX: e.clientX - (rect.left + baseX),
+          offsetY: e.clientY - (rect.top + baseY)
+        };
+      });
 
     dragRef.current = {
       groupIds,
@@ -225,26 +182,21 @@ export default function App() {
       const dy = ev.clientY - d.startY;
 
       if (!d.moved) {
-        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
-          d.moved = true;
-        } else {
-          return;
-        }
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) d.moved = true;
+        else return;
       }
 
       const rect = containerRef.current.getBoundingClientRect();
 
-      setTasks(prev =>
-        prev.map(t => {
-          const o = d.offsets.find(o => o.id === t.id);
-          if (!o) return t;
-          return {
-            ...t,
-            x: ev.clientX - rect.left - o.offsetX,
-            y: ev.clientY - rect.top - o.offsetY
-          };
-        })
-      );
+      setTasks(prev => prev.map(t => {
+        const o = d.offsets.find(o => o.id === t.id);
+        if (!o) return t;
+        return {
+          ...t,
+          x: ev.clientX - rect.left - o.offsetX,
+          y: ev.clientY - rect.top - o.offsetY
+        };
+      }));
     }
 
     function up() {
@@ -256,7 +208,7 @@ export default function App() {
 
       if (!d) return;
 
-      // only treat as click if it was a single task and not moved
+      // Click behavior only if single and not moved
       if (!d.moved && d.groupIds.size === 1) {
         handleTaskClick(task.id);
       }
@@ -457,6 +409,62 @@ export default function App() {
     window.addEventListener("mouseup", up);
   }
 
+  // Start selection ONLY on empty canvas
+  function startSelection(e) {
+    // only left click
+    if (e.button !== 0) return;
+
+    // only if clicking true empty canvas
+    if (e.target !== containerRef.current) return;
+
+    e.preventDefault();
+
+    setSelectedIds(new Set());
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const startX = e.clientX - rect.left;
+    const startY = e.clientY - rect.top;
+
+    setSelectionBox({ x: startX, y: startY, w: 0, h: 0 });
+
+    function move(ev) {
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+
+      const box = {
+        x: Math.min(startX, x),
+        y: Math.min(startY, y),
+        w: Math.abs(x - startX),
+        h: Math.abs(y - startY)
+      };
+
+      setSelectionBox(box);
+
+      const selected = new Set();
+      tasks.forEach(t => {
+        if (
+          t.x < box.x + box.w &&
+          t.x + 160 > box.x &&
+          t.y < box.y + box.h &&
+          t.y + 40 > box.y
+        ) {
+          selected.add(t.id);
+        }
+      });
+
+      setSelectedIds(selected);
+    }
+
+    function up() {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      setSelectionBox(null);
+    }
+
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
   function addSectionAt(x, y) {
     const rect = containerRef.current.getBoundingClientRect();
 
@@ -543,112 +551,111 @@ export default function App() {
             addSectionAt(e.clientX - rect.left, e.clientY - rect.top);
           }}
         >
-          <svg className="absolute inset-0 pointer-events-none z-10" width="100%" height="100%">
-            {links.map((l, i) => {
-              const t1 = tasks.find(t => t.id === l.from);
-              const t2 = tasks.find(t => t.id === l.to);
-              if (!t1 || !t2) return null;
-              const p1 = getCenter(t1);
-              const p2 = getCenter(t2);
-              return (
-                <g key={i}>
-                <line
-                  x1={p1.x}
-                  y1={p1.y}
-                  x2={p2.x}
-                  y2={p2.y}
-                  stroke="transparent"
-                  strokeWidth={12}
-                  style={{ pointerEvents: "stroke" }}
-                  onContextMenu={(e) => { e.preventDefault(); deleteLink(i); }}
-                />
-                <line
-                  x1={p1.x}
-                  y1={p1.y}
-                  x2={p2.x}
-                  y2={p2.y}
-                  stroke="black"
-                  strokeWidth={1}
-                  pointerEvents="none"
-                />
-              </g>
-              );
-            })}
-          </svg>
+        <svg className="absolute inset-0 pointer-events-none z-10" width="100%" height="100%">
+          {links.map((l, i) => {
+            const t1 = tasks.find(t => t.id === l.from);
+            const t2 = tasks.find(t => t.id === l.to);
+            if (!t1 || !t2) return null;
+            const p1 = getCenter(t1);
+            const p2 = getCenter(t2);
+            return (
+              <g key={i}>
+              <line
+                x1={p1.x}
+                y1={p1.y}
+                x2={p2.x}
+                y2={p2.y}
+                stroke="transparent"
+                strokeWidth={12}
+                style={{ pointerEvents: "stroke" }}
+                onContextMenu={(e) => { e.preventDefault(); deleteLink(i); }}
+              />
+              <line
+                x1={p1.x}
+                y1={p1.y}
+                x2={p2.x}
+                y2={p2.y}
+                stroke="black"
+                strokeWidth={1}
+                pointerEvents="none"
+              />
+            </g>
+            );
+          })}
+        </svg>
 
-          <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%">
-            {linkStart && (() => {
-              const t = tasks.find(t => t.id === linkStart.taskId);
-              if (!t) return null;
-              const p = getCenter(t);
-              return (
-                <line x1={p.x} y1={p.y} x2={mousePos.x} y2={mousePos.y} stroke="black" strokeDasharray="4" />
-              );
-            })()}
-          </svg>
+        <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%">
+          {linkStart && (() => {
+            const t = tasks.find(t => t.id === linkStart.taskId);
+            if (!t) return null;
+            const p = getCenter(t);
+            return (
+              <line x1={p.x} y1={p.y} x2={mousePos.x} y2={mousePos.y} stroke="black" strokeDasharray="4" />
+            );
+          })()}
+        </svg>
 
-          {tasks.filter(t => t.y !== 20).map(task => (
-            <div
-              key={task.id}
-              onMouseDown={e => startDragTask(e, task)}
-              onDoubleClick={() => completeTask(task.id)}
-              onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-              className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedIds.has(task.id) ? "ring-2 ring-blue-500" : ""}`}
-              style={{ left: task.x, top: task.y, width: 160 }}
-            >
-              {task.title}
-            </div>
-          ))}
+        {tasks.filter(t => t.y !== 20).map(task => (
+          <div
+            key={task.id}
+            onMouseDown={e => startDragTask(e, task)}
+            onDoubleClick={() => completeTask(task.id)}
+            onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
+            className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedIds.has(task.id) ? "ring-2 ring-blue-500" : ""}`}
+            style={{ left: task.x, top: task.y, width: 160 }}
+          >
+            {task.title}
+          </div>
+        ))}
 
-          {/* Selection box */}
-          {selectionBox && (
-            <div
-              className="absolute border border-blue-400 bg-blue-100/30 z-40 pointer-events-none"
-              style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}
-            />
-          )}
+        {selectionBox && (
+          <div
+            className="absolute border border-blue-400 bg-blue-100/30 pointer-events-none z-40"
+            style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}
+          />
+        )}
 
-          {sections.map(sec => (
-            <div
-              key={sec.id}
-              className="absolute bg-gray-100 rounded-lg shadow z-0 border border-gray-300"
-              style={{ left: sec.x, top: sec.y, width: sec.width, height: sec.height }}
-            >
-              <div className="flex justify-between p-2 font-bold relative z-20">
-                <input
-                  value={sec.name}
-                  onChange={e =>
-                    setSections(prev => prev.map(s => (s.id === sec.id ? { ...s, name: e.target.value } : s)))
-                  }
-                  className="bg-transparent w-full ml-[4px]"
-                />
-                <div className="flex items-center gap-2">
-                  <button onMouseDown={e => e.stopPropagation()} onClick={() => deleteSection(sec.id)}>
-                    ✕
-                  </button>
-                  <span
-                    className="text-lg cursor-move"
-                    onMouseDown={e => {
-                      e.stopPropagation();
-                      startDragSection(e, sec);
-                    }}
-                  >
-                    ✥
-                  </span>
-                </div>
+        {sections.map(sec => (
+          <div
+            key={sec.id}
+            className="absolute bg-gray-100 rounded-lg shadow z-0 border border-gray-300"
+            style={{ left: sec.x, top: sec.y, width: sec.width, height: sec.height }}
+          >
+            <div className="flex justify-between p-2 font-bold relative z-20">
+              <input
+                value={sec.name}
+                onChange={e =>
+                  setSections(prev => prev.map(s => (s.id === sec.id ? { ...s, name: e.target.value } : s)))
+                }
+                className="bg-transparent w-full ml-[4px]"
+              />
+              <div className="flex items-center gap-2">
+                <button onMouseDown={e => e.stopPropagation()} onClick={() => deleteSection(sec.id)}>
+                  ✕
+                </button>
+                <span
+                  className="text-lg cursor-move"
+                  onMouseDown={e => {
+                    e.stopPropagation();
+                    startDragSection(e, sec);
+                  }}
+                >
+                  ✥
+                </span>
               </div>
-
-              <div onMouseDown={e => startResizeSection(e, sec, "right")} className="absolute right-0 top-0 h-full w-2 cursor-ew-resize" />
-              <div onMouseDown={e => startResizeSection(e, sec, "left")} className="absolute left-0 top-0 h-full w-2 cursor-ew-resize" />
-              <div onMouseDown={e => startResizeSection(e, sec, "bottom")} className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize" />
-              <div onMouseDown={e => startResizeSection(e, sec, "top")} className="absolute top-0 left-0 w-full h-2 cursor-ns-resize" />
-
-              <div onMouseDown={e => startResizeSection(e, sec, "top-left")} className="absolute left-0 top-0 w-3 h-3 cursor-nwse-resize" />
-              <div onMouseDown={e => startResizeSection(e, sec, "top-right")} className="absolute right-0 top-0 w-3 h-3 cursor-nesw-resize" />
-              <div onMouseDown={e => startResizeSection(e, sec, "bottom-left")} className="absolute left-0 bottom-0 w-3 h-3 cursor-nesw-resize" />
-              <div onMouseDown={e => startResizeSection(e, sec, "bottom-right")} className="absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize" />
             </div>
-          ))}
+
+            <div onMouseDown={e => startResizeSection(e, sec, "right")} className="absolute right-0 top-0 h-full w-2 cursor-ew-resize" />
+            <div onMouseDown={e => startResizeSection(e, sec, "left")} className="absolute left-0 top-0 h-full w-2 cursor-ew-resize" />
+            <div onMouseDown={e => startResizeSection(e, sec, "bottom")} className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize" />
+            <div onMouseDown={e => startResizeSection(e, sec, "top")} className="absolute top-0 left-0 w-full h-2 cursor-ns-resize" />
+
+            <div onMouseDown={e => startResizeSection(e, sec, "top-left")} className="absolute left-0 top-0 w-3 h-3 cursor-nwse-resize" />
+            <div onMouseDown={e => startResizeSection(e, sec, "top-right")} className="absolute right-0 top-0 w-3 h-3 cursor-nesw-resize" />
+            <div onMouseDown={e => startResizeSection(e, sec, "bottom-left")} className="absolute left-0 bottom-0 w-3 h-3 cursor-nesw-resize" />
+            <div onMouseDown={e => startResizeSection(e, sec, "bottom-right")} className="absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize" />
+          </div>
+        ))}
         </div>
       </div>
     </div>
