@@ -47,6 +47,10 @@ export default function App() {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const linkStartRef = useRef(null);
 
+  // Selection layer (visual only)
+  const [selectionBox, setSelectionBox] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+
   const dragRef = useRef(null);
   const undoRef = useRef([]);
   const hasLoadedRef = useRef(false);
@@ -101,6 +105,63 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
+  // Start selection only when clicking empty canvas
+  function startSelection(e) {
+    // Only handle LEFT mouse button for selection (don’t interfere with right-click)
+    if (e.button !== 0) return;
+
+    // prevent browser text selection while dragging selection box
+    e.preventDefault();
+
+    // clear selection on simple click
+    setSelectedIds(new Set());
+
+    if (e.target !== containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    const startX = e.clientX - rect.left;
+    const startY = e.clientY - rect.top;
+
+    setSelectionBox({ x: startX, y: startY, w: 0, h: 0 });
+
+    function move(ev) {
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+
+      const box = {
+        x: Math.min(startX, x),
+        y: Math.min(startY, y),
+        w: Math.abs(x - startX),
+        h: Math.abs(y - startY)
+      };
+
+      setSelectionBox(box);
+
+      const selected = new Set();
+      tasks.forEach(t => {
+        if (
+          t.x < box.x + box.w &&
+          t.x + 160 > box.x &&
+          t.y < box.y + box.h &&
+          t.y + 40 > box.y
+        ) {
+          selected.add(t.id);
+        }
+      });
+
+      setSelectedIds(selected);
+    }
+
+    function up() {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      setSelectionBox(null);
+    }
+
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
   function startDragTask(e, task) {
     // Shift+click = highlight only (no drag, no linking)
     if (e.shiftKey) {
@@ -125,6 +186,7 @@ export default function App() {
       ));
       return;
     }
+
     e.stopPropagation();
     e.preventDefault();
 
@@ -133,24 +195,25 @@ export default function App() {
     const startX = e.clientX;
     const startY = e.clientY;
 
-    let initialX = task.x;
-    let initialY = task.y;
+    // --- NEW: decide group (selected or single) ---
+    const groupIds = selectedIds.has(task.id)
+      ? new Set(selectedIds)
+      : new Set([task.id]);
 
-    if (task.y === 20) {
-      initialX = e.clientX - rect.left - 80;
-      initialY = e.clientY - rect.top - 20;
-
-      setTasks(prev => prev.map(t =>
-        t.id === task.id ? { ...t, x: initialX, y: initialY } : t
-      ));
-    }
+    // capture initial offsets for each task in the group
+    const offsets = tasks
+      .filter(t => groupIds.has(t.id))
+      .map(t => ({
+        id: t.id,
+        offsetX: e.clientX - (rect.left + t.x),
+        offsetY: e.clientY - (rect.top + t.y)
+      }));
 
     dragRef.current = {
-      taskId: task.id,
+      groupIds,
+      offsets,
       startX,
       startY,
-      offsetX: e.clientX - (rect.left + initialX),
-      offsetY: e.clientY - (rect.top + initialY),
       moved: false
     };
 
@@ -170,11 +233,17 @@ export default function App() {
       }
 
       const rect = containerRef.current.getBoundingClientRect();
-      const nx = ev.clientX - rect.left - d.offsetX;
-      const ny = ev.clientY - rect.top - d.offsetY;
 
       setTasks(prev =>
-        prev.map(t => (t.id === d.taskId ? { ...t, x: nx, y: ny } : t))
+        prev.map(t => {
+          const o = d.offsets.find(o => o.id === t.id);
+          if (!o) return t;
+          return {
+            ...t,
+            x: ev.clientX - rect.left - o.offsetX,
+            y: ev.clientY - rect.top - o.offsetY
+          };
+        })
       );
     }
 
@@ -187,7 +256,8 @@ export default function App() {
 
       if (!d) return;
 
-      if (!d.moved) {
+      // only treat as click if it was a single task and not moved
+      if (!d.moved && d.groupIds.size === 1) {
         handleTaskClick(task.id);
       }
     }
@@ -460,6 +530,7 @@ export default function App() {
 
       <div
         ref={containerRef}
+        onMouseDown={startSelection}
         className="relative h-[700px] border"
         onMouseMove={e => {
           const rect = containerRef.current.getBoundingClientRect();
@@ -521,12 +592,20 @@ export default function App() {
             onMouseDown={e => startDragTask(e, task)}
             onDoubleClick={() => completeTask(task.id)}
             onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-            className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none`}
+            className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedIds.has(task.id) ? "ring-2 ring-blue-500" : ""}`}
             style={{ left: task.x, top: task.y, width: 160 }}
           >
             {task.title}
           </div>
         ))}
+
+        {/* Selection box */}
+        {selectionBox && (
+          <div
+            className="absolute border border-blue-400 bg-blue-100/30 z-40"
+            style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}
+          />
+        )}
 
         {sections.map(sec => (
           <div
