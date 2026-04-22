@@ -184,6 +184,14 @@ export default function App() {
   function handleTaskClick(taskId) {
     const currentStart = linkStartRef.current;
 
+    // If clicking the same task again → cancel linking
+    if (currentStart && currentStart.taskId === taskId) {
+      linkStartRef.current = null;
+      setLinkStart(null);
+      return;
+    }
+
+    // Start linking
     if (!currentStart) {
       const next = { taskId };
       linkStartRef.current = next;
