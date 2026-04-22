@@ -30,7 +30,8 @@ function createTask(title, x, y) {
     title,
     x,
     y,
-    completed: false
+    completed: false,
+    highlighted: false
   };
 }
 
@@ -100,6 +101,15 @@ export default function App() {
   }, []);
 
   function startDragTask(e, task) {
+    // Shift+click = highlight only (no drag, no linking)
+    if (e.shiftKey) {
+      e.stopPropagation();
+      e.preventDefault();
+      setTasks(prev => prev.map(t =>
+        t.id === task.id ? { ...t, highlighted: !t.highlighted } : t
+      ));
+      return;
+    }
     e.stopPropagation();
     e.preventDefault();
 
@@ -416,7 +426,7 @@ export default function App() {
               onMouseDown={e => startDragTask(e, task)}
               onDoubleClick={() => completeTask(task.id)}
               onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-              className={`${toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move select-none`}
+              className={`${task.highlighted ? "bg-yellow-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move select-none`}
               style={{ width: 160 }}
             >
               {task.title}
@@ -496,7 +506,7 @@ export default function App() {
             onMouseDown={e => startDragTask(e, task)}
             onDoubleClick={() => completeTask(task.id)}
             onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-            className={`absolute ${toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none`}
+            className={`absolute ${task.highlighted ? "bg-yellow-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none`}
             style={{ left: task.x, top: task.y, width: 160 }}
           >
             {task.title}
