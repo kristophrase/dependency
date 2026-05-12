@@ -1,9 +1,12 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 let sectionIdCounter = 1;
 let taskIdCounter = 1;
 
 const EDGE_GAP = 20;
+const TASK_WIDTH = 160;
+const TASK_HEIGHT = 40;
+const STAGING_Y = 20;
 
 function snapWidth(rawW) {
   return Math.max(200, rawW);
@@ -37,23 +40,23 @@ function createTask(title, x, y) {
 }
 
 export default function App() {
-  const [newTaskTitle, setNewTaskTitle] = useState("");
   const containerRef = useRef(null);
+  const dragRef = useRef(null);
+  const mixedDragRef = useRef(null);
+  const linkStartRef = useRef(null);
+  const undoRef = useRef([]);
+  const hasLoadedRef = useRef(false);
 
+  const [newTaskTitle, setNewTaskTitle] = useState("");
   const [sections, setSections] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [links, setLinks] = useState([]);
   const [linkStart, setLinkStart] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const linkStartRef = useRef(null);
 
-  // Selection (visual only)
   const [selectionBox, setSelectionBox] = useState(null);
-  const [selectedIds, setSelectedIds] = useState(new Set());
-
-  const dragRef = useRef(null);
-  const undoRef = useRef([]);
-  const hasLoadedRef = useRef(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState(new Set());
+  const [selectedSectionIds, setSelectedSectionIds] = useState(new Set());
 
   useEffect(() => {
     const saved = localStorage.getItem("taskboard");
@@ -65,21 +68,19 @@ export default function App() {
       setTasks(data.tasks || []);
       setLinks(data.links || []);
 
-      sectionIdCounter = Math.max(1, ...(data.sections || []).map(s => s.id + 1));
-      taskIdCounter = Math.max(1, ...(data.tasks || []).map(t => t.id + 1));
+      const nextSectionId = Math.max(
+        1,
+        ...(data.sections || []).map(s => s.id + 1)
+      );
 
-      // delay enabling save until AFTER state is applied
-      setTimeout(() => {
-        hasLoadedRef.current = true;
-      }, 0);
+      const nextTaskId = Math.max(
+        1,
+        ...(data.tasks || []).map(t => t.id + 1)
+      );
 
-      return;
+      sectionIdCounter = nextSectionId;
+      taskIdCounter = nextTaskId;
     }
-
-    // no saved data
-    setSections([]);
-    setTasks([]);
-    setLinks([]);
 
     setTimeout(() => {
       hasLoadedRef.current = true;
@@ -89,7 +90,10 @@ export default function App() {
   useEffect(() => {
     if (!hasLoadedRef.current) return;
 
-    localStorage.setItem("taskboard", JSON.stringify({ sections, tasks, links }));
+    localStorage.setItem(
+      "taskboard",
+      JSON.stringify({ sections, tasks, links })
+    );
   }, [sections, tasks, links]);
 
   useEffect(() => {
@@ -97,125 +101,41 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key === "z") {
         const last = undoRef.current.pop();
         if (!last) return;
+
         setTasks(last.tasks);
         setLinks(last.links);
       }
     }
+
     window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
+
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+    };
   }, []);
 
-  function startDragTask(e, task) {
-    // Shift+click = highlight only
-    if (e.shiftKey) {
-      e.stopPropagation();
-      e.preventDefault();
-      setTasks(prev => prev.map(t =>
-        t.id === task.id
-          ? { ...t, highlighted: !t.highlighted, blue: false }
-          : t
-      ));
-      return;
-    }
-
-    // Ctrl/Cmd+click = blue toggle
-    if (e.ctrlKey || e.metaKey) {
-      e.stopPropagation();
-      e.preventDefault();
-      setTasks(prev => prev.map(t =>
-        t.id === task.id
-          ? { ...t, blue: !t.blue, highlighted: false }
-          : t
-      ));
-      return;
-    }
-
-    e.stopPropagation();
-    e.preventDefault();
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const startX = e.clientX;
-    const startY = e.clientY;
-
-    // Normalize staging position
-    let initialX = task.x;
-    let initialY = task.y;
-    if (task.y === 20) {
-      initialX = e.clientX - rect.left - 80;
-      initialY = e.clientY - rect.top - 20;
-      setTasks(prev => prev.map(t =>
-        t.id === task.id ? { ...t, x: initialX, y: initialY } : t
-      ));
-    }
-
-    // Decide group (selected or single)
-    const groupIds = selectedIds.has(task.id)
-      ? new Set(selectedIds)
-      : new Set([task.id]);
-
-    // Capture offsets per task in group
-    const offsets = tasks
-      .filter(t => groupIds.has(t.id))
-      .map(t => {
-        const baseX = (t.id === task.id) ? initialX : t.x;
-        const baseY = (t.id === task.id) ? initialY : t.y;
-        return {
-          id: t.id,
-          offsetX: e.clientX - (rect.left + baseX),
-          offsetY: e.clientY - (rect.top + baseY)
-        };
-      });
-
-    dragRef.current = {
-      groupIds,
-      offsets,
-      startX,
-      startY,
-      moved: false
+  function getCenter(task) {
+    return {
+      x: task.x + TASK_WIDTH / 2,
+      y: task.y + TASK_HEIGHT / 2
     };
+  }
 
-    function move(ev) {
-      const d = dragRef.current;
-      if (!d) return;
+  function getArrowPoints(p1, p2) {
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
 
-      const dx = ev.clientX - d.startX;
-      const dy = ev.clientY - d.startY;
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const arrowSize = 10;
 
-      if (!d.moved) {
-        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) d.moved = true;
-        else return;
-      }
-
-      const rect = containerRef.current.getBoundingClientRect();
-
-      setTasks(prev => prev.map(t => {
-        const o = d.offsets.find(o => o.id === t.id);
-        if (!o) return t;
-        return {
-          ...t,
-          x: ev.clientX - rect.left - o.offsetX,
-          y: ev.clientY - rect.top - o.offsetY
-        };
-      }));
-    }
-
-    function up() {
-      const d = dragRef.current;
-      dragRef.current = null;
-
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-
-      if (!d) return;
-
-      // Click behavior only if single and not moved
-      if (!d.moved && d.groupIds.size === 1) {
-        handleTaskClick(task.id);
-      }
-    }
-
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
+    return {
+      midX,
+      midY,
+      leftX: midX - arrowSize * Math.cos(angle - Math.PI / 6),
+      leftY: midY - arrowSize * Math.sin(angle - Math.PI / 6),
+      rightX: midX - arrowSize * Math.cos(angle + Math.PI / 6),
+      rightY: midY - arrowSize * Math.sin(angle + Math.PI / 6)
+    };
   }
 
   function handleTaskClick(taskId) {
@@ -229,7 +149,10 @@ export default function App() {
     }
 
     if (currentStart.taskId !== taskId) {
-      setLinks(prev => [...prev, { from: currentStart.taskId, to: taskId }]);
+      setLinks(prev => [
+        ...prev,
+        { from: currentStart.taskId, to: taskId }
+      ]);
     }
 
     linkStartRef.current = null;
@@ -243,53 +166,159 @@ export default function App() {
 
   function deleteTask(taskId) {
     undoRef.current.push({ tasks, links });
+
     setTasks(prev => prev.filter(t => t.id !== taskId));
-    setLinks(prev => prev.filter(l => l.from !== taskId && l.to !== taskId));
+    setLinks(prev =>
+      prev.filter(l => l.from !== taskId && l.to !== taskId)
+    );
   }
 
   function completeTask(taskId) {
-    const blockers = links.filter(l => l.to === taskId).map(l => l.from);
+    const blockers = links
+      .filter(l => l.to === taskId)
+      .map(l => l.from);
 
-    const hasIncompleteDeps = blockers.some(id => tasks.some(t => t.id === id));
+    const hasIncompleteDeps = blockers.some(id =>
+      tasks.some(t => t.id === id)
+    );
 
     if (hasIncompleteDeps) return;
 
-    undoRef.current.push({ tasks, links });
-
-    setTasks(prev => prev.filter(t => t.id !== taskId));
-    setLinks(prev => prev.filter(l => l.from !== taskId && l.to !== taskId));
+    deleteTask(taskId);
   }
 
-  function getCenter(task) {
-    const w = 160;
-    const h = 40;
-    return {
-      x: task.x + w / 2,
-      y: task.y + h / 2
+  function startDragTask(e, task) {
+    if (e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      setTasks(prev =>
+        prev.map(t =>
+          t.id === task.id
+            ? {
+                ...t,
+                highlighted: !t.highlighted,
+                blue: false
+              }
+            : t
+        )
+      );
+
+      return;
+    }
+
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      setTasks(prev =>
+        prev.map(t =>
+          t.id === task.id
+            ? {
+                ...t,
+                blue: !t.blue,
+                highlighted: false
+              }
+            : t
+        )
+      );
+
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = containerRef.current.getBoundingClientRect();
+
+    let initialX = task.x;
+    let initialY = task.y;
+
+    if (task.y === STAGING_Y) {
+      initialX = e.clientX - rect.left - TASK_WIDTH / 2;
+      initialY = e.clientY - rect.top - TASK_HEIGHT / 2;
+
+      setTasks(prev =>
+        prev.map(t =>
+          t.id === task.id
+            ? { ...t, x: initialX, y: initialY }
+            : t
+        )
+      );
+    }
+
+    const groupIds = selectedTaskIds.has(task.id)
+      ? new Set(selectedTaskIds)
+      : new Set([task.id]);
+
+    const offsets = tasks
+      .filter(t => groupIds.has(t.id))
+      .map(t => {
+        const baseX = t.id === task.id ? initialX : t.x;
+        const baseY = t.id === task.id ? initialY : t.y;
+
+        return {
+          id: t.id,
+          offsetX: e.clientX - (rect.left + baseX),
+          offsetY: e.clientY - (rect.top + baseY)
+        };
+      });
+
+    dragRef.current = {
+      groupIds,
+      offsets,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false
     };
-  }
 
-  function getArrowPoints(p1, p2) {
-    const midX = (p1.x + p2.x) / 2;
-    const midY = (p1.y + p2.y) / 2;
+    function move(ev) {
+      const d = dragRef.current;
+      if (!d) return;
 
-    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-    const arrowSize = 10;
+      const dx = ev.clientX - d.startX;
+      const dy = ev.clientY - d.startY;
 
-    const leftX = midX - arrowSize * Math.cos(angle - Math.PI / 6);
-    const leftY = midY - arrowSize * Math.sin(angle - Math.PI / 6);
+      if (!d.moved) {
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+          d.moved = true;
+        } else {
+          return;
+        }
+      }
 
-    const rightX = midX - arrowSize * Math.cos(angle + Math.PI / 6);
-    const rightY = midY - arrowSize * Math.sin(angle + Math.PI / 6);
+      const canvasRect = containerRef.current.getBoundingClientRect();
 
-    return {
-      midX,
-      midY,
-      leftX,
-      leftY,
-      rightX,
-      rightY
-    };
+      setTasks(prev =>
+        prev.map(t => {
+          const offset = d.offsets.find(o => o.id === t.id);
+          if (!offset) return t;
+
+          return {
+            ...t,
+            x: ev.clientX - canvasRect.left - offset.offsetX,
+            y: ev.clientY - canvasRect.top - offset.offsetY
+          };
+        })
+      );
+    }
+
+    function up() {
+      const d = dragRef.current;
+      dragRef.current = null;
+
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+
+      if (!d) return;
+
+      if (!d.moved && d.groupIds.size === 1) {
+        handleTaskClick(task.id);
+      }
+    }
+
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
   }
 
   function startDragSection(e, sec) {
@@ -300,46 +329,43 @@ export default function App() {
 
     const startX = e.clientX;
     const startY = e.clientY;
-    const startPos = { x: sec.x, y: sec.y };
+
+    const groupIds = selectedSectionIds.has(sec.id)
+      ? new Set(selectedSectionIds)
+      : new Set([sec.id]);
+
+    const startPositions = sections
+      .filter(s => groupIds.has(s.id))
+      .map(s => ({
+        id: s.id,
+        x: s.x,
+        y: s.y
+      }));
 
     function move(ev) {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+
       const rect = containerRef.current.getBoundingClientRect();
 
-      setSections(prev => {
-        const current = prev.find(s => s.id === sec.id);
-        if (!current) return prev;
+      setSections(prev =>
+        prev.map(s => {
+          const start = startPositions.find(p => p.id === s.id);
+          if (!start) return s;
 
-        let nx = startPos.x + (ev.clientX - startX);
-        let ny = startPos.y + (ev.clientY - startY);
+          let nx = start.x + dx;
+          let ny = start.y + dy;
 
-        nx = Math.max(EDGE_GAP, Math.min(rect.width - current.width - EDGE_GAP, nx));
-        ny = Math.max(EDGE_GAP, Math.min(rect.height - current.height - EDGE_GAP, ny));
+          nx = Math.max(EDGE_GAP, Math.min(rect.width - s.width - EDGE_GAP, nx));
+          ny = Math.max(EDGE_GAP, Math.min(rect.height - s.height - EDGE_GAP, ny));
 
-        const overlaps = (x, y) =>
-          prev.some(other => {
-            if (other.id === current.id) return false;
-            return !(
-              x + current.width + EDGE_GAP <= other.x ||
-              x >= other.x + other.width + EDGE_GAP ||
-              y + current.height + EDGE_GAP <= other.y ||
-              y >= other.y + other.height + EDGE_GAP
-            );
-          });
-
-        if (!overlaps(nx, ny)) {
-          return prev.map(s => (s.id === current.id ? { ...s, x: nx, y: ny } : s));
-        }
-
-        if (!overlaps(nx, current.y)) {
-          return prev.map(s => (s.id === current.id ? { ...s, x: nx } : s));
-        }
-
-        if (!overlaps(current.x, ny)) {
-          return prev.map(s => (s.id === current.id ? { ...s, y: ny } : s));
-        }
-
-        return prev;
-      });
+          return {
+            ...s,
+            x: nx,
+            y: ny
+          };
+        })
+      );
     }
 
     function up() {
@@ -352,75 +378,52 @@ export default function App() {
   }
 
   function startResizeSection(e, sec, dir) {
-    e.stopPropagation();
     e.preventDefault();
+    e.stopPropagation();
 
     const startX = e.clientX;
     const startY = e.clientY;
     const start = { ...sec };
 
-    function overlaps(x, y, w, h, current, all) {
-      return all.some(other => {
-        if (other.id === current.id) return false;
-        return !(
-          x + w + EDGE_GAP <= other.x ||
-          x >= other.x + other.width + EDGE_GAP ||
-          y + h + EDGE_GAP <= other.y ||
-          y >= other.y + other.height + EDGE_GAP
-        );
-      });
-    }
-
     function move(ev) {
       const rect = containerRef.current.getBoundingClientRect();
 
-      setSections(prev => {
-        const current = prev.find(s => s.id === sec.id);
-        if (!current) return prev;
+      setSections(prev =>
+        prev.map(s => {
+          if (s.id !== sec.id) return s;
 
-        let nx = start.x;
-        let ny = start.y;
-        let nw = start.width;
-        let nh = start.height;
+          let nx = start.x;
+          let ny = start.y;
+          let nw = start.width;
+          let nh = start.height;
 
-        const dx = ev.clientX - startX;
-        const dy = ev.clientY - startY;
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
 
-        if (dir.includes("right")) nw = snapWidth(start.width + dx);
-        if (dir.includes("left")) {
-          nw = snapWidth(start.width - dx);
-          nx = start.x + dx;
-        }
+          if (dir.includes("right")) nw = snapWidth(start.width + dx);
+          if (dir.includes("left")) {
+            nw = snapWidth(start.width - dx);
+            nx = start.x + dx;
+          }
 
-        if (dir.includes("bottom")) nh = snapHeight(start.height + dy);
-        if (dir.includes("top")) {
-          nh = snapHeight(start.height - dy);
-          ny = start.y + dy;
-        }
+          if (dir.includes("bottom")) nh = snapHeight(start.height + dy);
+          if (dir.includes("top")) {
+            nh = snapHeight(start.height - dy);
+            ny = start.y + dy;
+          }
 
-        nw = Math.min(nw, rect.width - nx - EDGE_GAP);
-        nh = Math.min(nh, rect.height - ny - EDGE_GAP);
-        nx = Math.max(EDGE_GAP, nx);
-        ny = Math.max(EDGE_GAP, ny);
+          nw = Math.min(nw, rect.width - nx - EDGE_GAP);
+          nh = Math.min(nh, rect.height - ny - EDGE_GAP);
 
-        const tryResize = (x, y, w, h) => !overlaps(x, y, w, h, current, prev);
-
-        if (tryResize(nx, ny, nw, nh)) {
-          return prev.map(s =>
-            s.id === current.id ? { ...s, x: nx, y: ny, width: nw, height: nh } : s
-          );
-        }
-
-        if (tryResize(current.x, current.y, nw, current.height)) {
-          return prev.map(s => (s.id === current.id ? { ...s, width: nw } : s));
-        }
-
-        if (tryResize(current.x, current.y, current.width, nh)) {
-          return prev.map(s => (s.id === current.id ? { ...s, height: nh } : s));
-        }
-
-        return prev;
-      });
+          return {
+            ...s,
+            x: nx,
+            y: ny,
+            width: nw,
+            height: nh
+          };
+        })
+      );
     }
 
     function up() {
@@ -432,17 +435,83 @@ export default function App() {
     window.addEventListener("mouseup", up);
   }
 
-  // Start selection ONLY on empty canvas
-  function startSelection(e) {
-    // only left click
-    if (e.button !== 0) return;
+  function startMixedDrag(e) {
+    if (selectedTaskIds.size === 0 && selectedSectionIds.size === 0) {
+      return;
+    }
 
-    // only if clicking true empty canvas
+    e.preventDefault();
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+
+    const taskStarts = tasks
+      .filter(t => selectedTaskIds.has(t.id))
+      .map(t => ({ id: t.id, x: t.x, y: t.y }));
+
+    const sectionStarts = sections
+      .filter(s => selectedSectionIds.has(s.id))
+      .map(s => ({ id: s.id, x: s.x, y: s.y }));
+
+    mixedDragRef.current = {
+      startX,
+      startY,
+      taskStarts,
+      sectionStarts
+    };
+
+    function move(ev) {
+      const d = mixedDragRef.current;
+      if (!d) return;
+
+      const dx = ev.clientX - d.startX;
+      const dy = ev.clientY - d.startY;
+
+      setTasks(prev =>
+        prev.map(t => {
+          const start = d.taskStarts.find(p => p.id === t.id);
+          if (!start) return t;
+
+          return {
+            ...t,
+            x: start.x + dx,
+            y: start.y + dy
+          };
+        })
+      );
+
+      setSections(prev =>
+        prev.map(s => {
+          const start = d.sectionStarts.find(p => p.id === s.id);
+          if (!start) return s;
+
+          return {
+            ...s,
+            x: start.x + dx,
+            y: start.y + dy
+          };
+        })
+      );
+    }
+
+    function up() {
+      mixedDragRef.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    }
+
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
+  function startSelection(e) {
+    if (e.button !== 0) return;
     if (e.target !== containerRef.current) return;
 
     e.preventDefault();
 
-    setSelectedIds(new Set());
+    setSelectedTaskIds(new Set());
+    setSelectedSectionIds(new Set());
 
     const rect = containerRef.current.getBoundingClientRect();
     const startX = e.clientX - rect.left;
@@ -463,19 +532,33 @@ export default function App() {
 
       setSelectionBox(box);
 
-      const selected = new Set();
+      const nextTaskIds = new Set();
+      const nextSectionIds = new Set();
+
       tasks.forEach(t => {
         if (
           t.x < box.x + box.w &&
-          t.x + 160 > box.x &&
+          t.x + TASK_WIDTH > box.x &&
           t.y < box.y + box.h &&
-          t.y + 40 > box.y
+          t.y + TASK_HEIGHT > box.y
         ) {
-          selected.add(t.id);
+          nextTaskIds.add(t.id);
         }
       });
 
-      setSelectedIds(selected);
+      sections.forEach(sec => {
+        if (
+          sec.x < box.x + box.w &&
+          sec.x + sec.width > box.x &&
+          sec.y < box.y + box.h &&
+          sec.y + sec.height > box.y
+        ) {
+          nextSectionIds.add(sec.id);
+        }
+      });
+
+      setSelectedTaskIds(nextTaskIds);
+      setSelectedSectionIds(nextSectionIds);
     }
 
     function up() {
@@ -494,10 +577,13 @@ export default function App() {
     const width = snapWidth(220);
     const height = snapHeight(300);
 
-    let baseX = Math.max(EDGE_GAP, Math.min(rect.width - width - EDGE_GAP, x));
-    let baseY = Math.max(EDGE_GAP, Math.min(rect.height - height - EDGE_GAP, y));
+    const nx = Math.max(EDGE_GAP, Math.min(rect.width - width - EDGE_GAP, x));
+    const ny = Math.max(EDGE_GAP, Math.min(rect.height - height - EDGE_GAP, y));
 
-    setSections(prev => [...prev, createSection("New Section", baseX, baseY)]);
+    setSections(prev => [
+      ...prev,
+      createSection("New Section", nx, ny)
+    ]);
   }
 
   function deleteSection(id) {
@@ -507,26 +593,31 @@ export default function App() {
   function addTask() {
     if (!newTaskTitle.trim()) return;
 
-    const stagingY = 20;
-    const TASK_W = 160;
     const GAP = 8;
 
-    // shift existing staging tasks left by one slot
     setTasks(prev => {
       const shifted = prev.map(t => {
-        if (t.y !== stagingY) return t;
-        return { ...t, x: t.x - (TASK_W + GAP) };
+        if (t.y !== STAGING_Y) return t;
+
+        return {
+          ...t,
+          x: t.x - (TASK_WIDTH + GAP)
+        };
       });
 
-      // place new task closest to input (rightmost = x: 0)
-      return [...shifted, createTask(newTaskTitle, 0, stagingY)];
+      return [
+        ...shifted,
+        createTask(newTaskTitle, 0, STAGING_Y)
+      ];
     });
 
     setNewTaskTitle("");
   }
 
   function handleTaskInputKey(e) {
-    if (e.key === "Enter") addTask();
+    if (e.key === "Enter") {
+      addTask();
+    }
   }
 
   const fromIds = new Set(links.map(l => l.from));
@@ -536,19 +627,34 @@ export default function App() {
     <div className="p-4">
       <div className="flex items-center gap-2 mb-2 h-[70px]">
         <div className="flex gap-2 flex-1 justify-end">
-          {tasks.filter(t => t.y === 20).map(task => (
-            <div
-              key={task.id}
-              onMouseDown={e => startDragTask(e, task)}
-              onDoubleClick={() => completeTask(task.id)}
-              onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-              className={`${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move select-none`}
-              style={{ width: 160 }}
-            >
-              {task.title}
-            </div>
-          ))}
+          {tasks
+            .filter(t => t.y === STAGING_Y)
+            .map(task => (
+              <div
+                key={task.id}
+                onMouseDown={e => startDragTask(e, task)}
+                onDoubleClick={() => completeTask(task.id)}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  deleteTask(task.id);
+                }}
+                className={`${task.highlighted
+                  ? "bg-yellow-200"
+                  : task.blue
+                    ? "bg-blue-200"
+                    : toIds.has(task.id)
+                      ? "bg-gray-200"
+                      : fromIds.has(task.id)
+                        ? "bg-green-300"
+                        : "bg-green-200"
+                  } p-2 rounded shadow text-sm cursor-move select-none`}
+                style={{ width: TASK_WIDTH }}
+              >
+                {task.title}
+              </div>
+            ))}
         </div>
+
         <input
           value={newTaskTitle}
           onChange={e => setNewTaskTitle(e.target.value)}
@@ -556,126 +662,263 @@ export default function App() {
           placeholder="New task"
           className="border px-2 py-1 text-sm"
         />
-        <button onClick={addTask} className="border px-2 py-1 text-sm bg-gray-100">Add</button>
+
+        <button
+          onClick={addTask}
+          className="border px-2 py-1 text-sm bg-gray-100"
+        >
+          Add
+        </button>
       </div>
 
       <div className="h-[calc(100vh-120px)] border overflow-auto">
         <div
           ref={containerRef}
-          onMouseDown={startSelection}
           className="relative min-w-[3000px] min-h-[2000px]"
+          onMouseDown={e => {
+            const hasSelection =
+              selectedTaskIds.size > 0 ||
+              selectedSectionIds.size > 0;
+
+            const isCanvas = e.target === containerRef.current;
+
+            if (hasSelection && !isCanvas) {
+              startMixedDrag(e);
+              return;
+            }
+
+            startSelection(e);
+          }}
           onMouseMove={e => {
             const rect = containerRef.current.getBoundingClientRect();
-            setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+
+            setMousePos({
+              x: e.clientX - rect.left,
+              y: e.clientY - rect.top
+            });
           }}
           onDoubleClick={e => {
             if (e.target !== containerRef.current) return;
+
             const rect = containerRef.current.getBoundingClientRect();
-            addSectionAt(e.clientX - rect.left, e.clientY - rect.top);
+
+            addSectionAt(
+              e.clientX - rect.left,
+              e.clientY - rect.top
+            );
           }}
         >
-        <svg className="absolute inset-0 pointer-events-none z-10" width="100%" height="100%">
-          {links.map((l, i) => {
-            const t1 = tasks.find(t => t.id === l.from);
-            const t2 = tasks.find(t => t.id === l.to);
-            if (!t1 || !t2) return null;
-            const p1 = getCenter(t1);
-            const p2 = getCenter(t2);
-            const arrow = getArrowPoints(p1, p2);
-            return (
-              <g key={i}>
-              <line
-                x1={p1.x}
-                y1={p1.y}
-                x2={p2.x}
-                y2={p2.y}
-                stroke="black"
-                strokeWidth={1}
-                pointerEvents="none"
-              />
-
-              <polygon
-                points={`${arrow.midX},${arrow.midY} ${arrow.leftX},${arrow.leftY} ${arrow.rightX},${arrow.rightY}`}
-                fill="black"
-                pointerEvents="none"
-              />
-            </g>
-            );
-          })}
-        </svg>
-
-        <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%">
-          {linkStart && (() => {
-            const t = tasks.find(t => t.id === linkStart.taskId);
-            if (!t) return null;
-            const p = getCenter(t);
-            return (
-              <line x1={p.x} y1={p.y} x2={mousePos.x} y2={mousePos.y} stroke="black" strokeDasharray="4" />
-            );
-          })()}
-        </svg>
-
-        {tasks.filter(t => t.y !== 20).map(task => (
-          <div
-            key={task.id}
-            onMouseDown={e => startDragTask(e, task)}
-            onDoubleClick={() => completeTask(task.id)}
-            onContextMenu={(e) => { e.preventDefault(); deleteTask(task.id); }}
-            className={`absolute ${task.highlighted ? "bg-yellow-200" : task.blue ? "bg-blue-200" : toIds.has(task.id) ? "bg-gray-200" : fromIds.has(task.id) ? "bg-green-300" : "bg-green-200"} p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedIds.has(task.id) ? "ring-2 ring-blue-500" : ""}`}
-            style={{ left: task.x, top: task.y, width: 160 }}
+          <svg
+            className="absolute inset-0 pointer-events-none z-10"
+            width="100%"
+            height="100%"
           >
-            {task.title}
-          </div>
-        ))}
+            {links.map((l, i) => {
+              const t1 = tasks.find(t => t.id === l.from);
+              const t2 = tasks.find(t => t.id === l.to);
 
-        {selectionBox && (
-          <div
-            className="absolute border border-blue-400 bg-blue-100/30 pointer-events-none z-40"
-            style={{ left: selectionBox.x, top: selectionBox.y, width: selectionBox.w, height: selectionBox.h }}
-          />
-        )}
+              if (!t1 || !t2) return null;
 
-        {sections.map(sec => (
-          <div
-            key={sec.id}
-            className="absolute bg-gray-100 rounded-lg shadow z-0 border border-gray-300"
-            style={{ left: sec.x, top: sec.y, width: sec.width, height: sec.height }}
+              const p1 = getCenter(t1);
+              const p2 = getCenter(t2);
+              const arrow = getArrowPoints(p1, p2);
+
+              return (
+                <g key={i}>
+                  <line
+                    x1={p1.x}
+                    y1={p1.y}
+                    x2={p2.x}
+                    y2={p2.y}
+                    stroke="transparent"
+                    strokeWidth={12}
+                    style={{ pointerEvents: "stroke" }}
+                    onContextMenu={e => {
+                      e.preventDefault();
+                      deleteLink(i);
+                    }}
+                  />
+
+                  <line
+                    x1={p1.x}
+                    y1={p1.y}
+                    x2={p2.x}
+                    y2={p2.y}
+                    stroke="black"
+                    strokeWidth={1}
+                    pointerEvents="none"
+                  />
+
+                  <polygon
+                    points={`${arrow.midX},${arrow.midY} ${arrow.leftX},${arrow.leftY} ${arrow.rightX},${arrow.rightY}`}
+                    fill="black"
+                    pointerEvents="none"
+                  />
+                </g>
+              );
+            })}
+          </svg>
+
+          <svg
+            className="absolute inset-0 pointer-events-none z-30"
+            width="100%"
+            height="100%"
           >
-            <div className="flex justify-between p-2 font-bold relative z-20">
-              <input
-                value={sec.name}
-                onChange={e =>
-                  setSections(prev => prev.map(s => (s.id === sec.id ? { ...s, name: e.target.value } : s)))
-                }
-                className="bg-transparent w-full ml-[4px]"
-              />
-              <div className="flex items-center gap-2">
-                <button onMouseDown={e => e.stopPropagation()} onClick={() => deleteSection(sec.id)}>
-                  ✕
-                </button>
-                <span
-                  className="text-lg cursor-move"
-                  onMouseDown={e => {
-                    e.stopPropagation();
-                    startDragSection(e, sec);
-                  }}
-                >
-                  ✥
-                </span>
+            {linkStart && (() => {
+              const t = tasks.find(t => t.id === linkStart.taskId);
+              if (!t) return null;
+
+              const p = getCenter(t);
+
+              return (
+                <line
+                  x1={p.x}
+                  y1={p.y}
+                  x2={mousePos.x}
+                  y2={mousePos.y}
+                  stroke="black"
+                  strokeDasharray="4"
+                />
+              );
+            })()}
+          </svg>
+
+          {tasks
+            .filter(t => t.y !== STAGING_Y)
+            .map(task => (
+              <div
+                key={task.id}
+                onMouseDown={e => startDragTask(e, task)}
+                onDoubleClick={() => completeTask(task.id)}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  deleteTask(task.id);
+                }}
+                className={`absolute ${task.highlighted
+                  ? "bg-yellow-200"
+                  : task.blue
+                    ? "bg-blue-200"
+                    : toIds.has(task.id)
+                      ? "bg-gray-200"
+                      : fromIds.has(task.id)
+                        ? "bg-green-300"
+                        : "bg-green-200"
+                  } p-2 rounded shadow text-sm cursor-move z-20 select-none ${selectedTaskIds.has(task.id)
+                    ? "ring-2 ring-blue-500"
+                    : ""
+                  }`}
+                style={{
+                  left: task.x,
+                  top: task.y,
+                  width: TASK_WIDTH
+                }}
+              >
+                {task.title}
               </div>
+            ))}
+
+          {selectionBox && (
+            <div
+              className="absolute border border-blue-400 bg-blue-100/30 pointer-events-none z-40"
+              style={{
+                left: selectionBox.x,
+                top: selectionBox.y,
+                width: selectionBox.w,
+                height: selectionBox.h
+              }}
+            />
+          )}
+
+          {sections.map(sec => (
+            <div
+              key={sec.id}
+              className={`absolute bg-gray-100 rounded-lg shadow z-0 border ${selectedSectionIds.has(sec.id)
+                ? "border-blue-500 ring-2 ring-blue-400"
+                : "border-gray-300"
+                }`}
+              style={{
+                left: sec.x,
+                top: sec.y,
+                width: sec.width,
+                height: sec.height
+              }}
+            >
+              <div className="flex justify-between p-2 font-bold relative z-20">
+                <input
+                  value={sec.name}
+                  onChange={e => {
+                    setSections(prev =>
+                      prev.map(s =>
+                        s.id === sec.id
+                          ? { ...s, name: e.target.value }
+                          : s
+                      )
+                    );
+                  }}
+                  className="bg-transparent w-full ml-[4px]"
+                />
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onMouseDown={e => e.stopPropagation()}
+                    onClick={() => deleteSection(sec.id)}
+                  >
+                    ✕
+                  </button>
+
+                  <span
+                    className="text-lg cursor-move"
+                    onMouseDown={e => {
+                      e.stopPropagation();
+                      startDragSection(e, sec);
+                    }}
+                  >
+                    ✥
+                  </span>
+                </div>
+              </div>
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "right")}
+                className="absolute right-0 top-0 h-full w-2 cursor-ew-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "left")}
+                className="absolute left-0 top-0 h-full w-2 cursor-ew-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "bottom")}
+                className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "top")}
+                className="absolute top-0 left-0 w-full h-2 cursor-ns-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "top-left")}
+                className="absolute left-0 top-0 w-3 h-3 cursor-nwse-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "top-right")}
+                className="absolute right-0 top-0 w-3 h-3 cursor-nesw-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "bottom-left")}
+                className="absolute left-0 bottom-0 w-3 h-3 cursor-nesw-resize"
+              />
+
+              <div
+                onMouseDown={e => startResizeSection(e, sec, "bottom-right")}
+                className="absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize"
+              />
             </div>
-
-            <div onMouseDown={e => startResizeSection(e, sec, "right")} className="absolute right-0 top-0 h-full w-2 cursor-ew-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "left")} className="absolute left-0 top-0 h-full w-2 cursor-ew-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "bottom")} className="absolute bottom-0 left-0 w-full h-2 cursor-ns-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "top")} className="absolute top-0 left-0 w-full h-2 cursor-ns-resize" />
-
-            <div onMouseDown={e => startResizeSection(e, sec, "top-left")} className="absolute left-0 top-0 w-3 h-3 cursor-nwse-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "top-right")} className="absolute right-0 top-0 w-3 h-3 cursor-nesw-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "bottom-left")} className="absolute left-0 bottom-0 w-3 h-3 cursor-nesw-resize" />
-            <div onMouseDown={e => startResizeSection(e, sec, "bottom-right")} className="absolute right-0 bottom-0 w-3 h-3 cursor-nwse-resize" />
-          </div>
-        ))}
+          ))}
         </div>
       </div>
     </div>
