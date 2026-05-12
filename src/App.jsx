@@ -269,6 +269,29 @@ export default function App() {
     };
   }
 
+  function getArrowPoints(p1, p2) {
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+
+    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    const arrowSize = 10;
+
+    const leftX = midX - arrowSize * Math.cos(angle - Math.PI / 6);
+    const leftY = midY - arrowSize * Math.sin(angle - Math.PI / 6);
+
+    const rightX = midX - arrowSize * Math.cos(angle + Math.PI / 6);
+    const rightY = midY - arrowSize * Math.sin(angle + Math.PI / 6);
+
+    return {
+      midX,
+      midY,
+      leftX,
+      leftY,
+      rightX,
+      rightY
+    };
+  }
+
   function startDragSection(e, sec) {
     if (e.target.closest("button")) return;
     if (e.target.tagName === "INPUT") return;
@@ -558,6 +581,7 @@ export default function App() {
             if (!t1 || !t2) return null;
             const p1 = getCenter(t1);
             const p2 = getCenter(t2);
+            const arrow = getArrowPoints(p1, p2);
             return (
               <g key={i}>
               <line
@@ -565,18 +589,14 @@ export default function App() {
                 y1={p1.y}
                 x2={p2.x}
                 y2={p2.y}
-                stroke="transparent"
-                strokeWidth={12}
-                style={{ pointerEvents: "stroke" }}
-                onContextMenu={(e) => { e.preventDefault(); deleteLink(i); }}
-              />
-              <line
-                x1={p1.x}
-                y1={p1.y}
-                x2={p2.x}
-                y2={p2.y}
                 stroke="black"
                 strokeWidth={1}
+                pointerEvents="none"
+              />
+
+              <polygon
+                points={`${arrow.midX},${arrow.midY} ${arrow.leftX},${arrow.leftY} ${arrow.rightX},${arrow.rightY}`}
+                fill="black"
                 pointerEvents="none"
               />
             </g>
